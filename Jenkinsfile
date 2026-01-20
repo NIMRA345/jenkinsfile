@@ -12,35 +12,40 @@ pipeline {
     }
 
     stages {
-        stage('Build Repositories in Parallel') {
+        stage('Build Repositories (Max 3 in Parallel)') {
             steps {
                 script {
                     def repos = load 'reposConfig.groovy'
-                    def builds = [:]
+                    def batchSize = 3   // 🔥 Only 3 repos at a time
 
-                    for (repo in repos) {
-                        def repoName = repo.name
-                        def repoCfg  = repo
+                    for (int i = 0; i < repos.size(); i += batchSize) {
+                        def batch = repos[i..<Math.min(i + batchSize, repos.size())]
+                        def builds = [:]
 
-                        builds[repoName] = {
-                            stage("Build ${repoName}") {
-                                dir(repoName) {
-                                    deleteDir()
+                        for (repo in batch) {
+                            def repoCopy = repo
 
-                                    def branchToBuild = params[repoCfg.param] ?: repoCfg.branch
-                                    echo "📌 Building ${repoName} on branch: ${branchToBuild}"
+                            builds[repoCopy.name] = {
+                                stage("Build ${repoCopy.name}") {
+                                    dir(repoCopy.name) {
+                                        deleteDir()
 
-                                    git branch: branchToBuild,
-                                        url: "${env.BASE_GIT_URL}/${repoName}.git",
-                                        credentialsId: env.GIT_CREDS
+                                        def branchToBuild = params[repoCopy.param] ?: repoCopy.branch
+                                        echo "📌 Building ${repoCopy.name} on branch: ${branchToBuild}"
 
-                                    sh repoCfg.cmd
+                                        git branch: branchToBuild,
+                                            url: "${env.BASE_GIT_URL}/${repoCopy.name}.git",
+                                            credentialsId: env.GIT_CREDS
+
+                                        sh repoCopy.cmd
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    parallel builds, failFast: true
+                        // Run only this batch in parallel, then wait before next batch
+                        parallel builds, failFast: true
+                    }
                 }
             }
         }
